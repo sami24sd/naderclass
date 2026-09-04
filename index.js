@@ -457,6 +457,16 @@ export class ClassRoom {
 async function handleApi(req, env, url, path) {
   const method = req.method;
 
+  /* --- دریافت و ارسال اطلاعات: پشتیبانی از ارسال بین دو پنل جدا روی کلودفلر (CORS) --- */
+  const INFO_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "content-type",
+  };
+  if (path.startsWith("/api/info/") && method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: INFO_CORS_HEADERS });
+  }
+
   /* --- تشخیصی موقت: بررسی وجود کلید Gemini (بدون افشای مقدار) --- */
   if (path === "/api/debug/env-check" && method === "GET") {
     return json({
@@ -639,25 +649,25 @@ async function handleApi(req, env, url, path) {
 
     if (parts.length === 1 && method === "GET") {
       const raw = await env.EXAM_KV.get("infolink:" + linkId);
-      if (!raw) return json({ ok: false, error: "این لینک معتبر نیست" }, 404);
+      if (!raw) return json({ ok: false, error: "این لینک معتبر نیست" }, 404, INFO_CORS_HEADERS);
       const meta = JSON.parse(raw);
-      return json({ ok: true, ownerName: meta.ownerName, ownerRole: meta.ownerRole });
+      return json({ ok: true, ownerName: meta.ownerName, ownerRole: meta.ownerRole }, 200, INFO_CORS_HEADERS);
     }
 
     if (parts[1] === "send" && method === "POST") {
       const raw = await env.EXAM_KV.get("infolink:" + linkId);
-      if (!raw) return json({ ok: false, error: "این لینک معتبر نیست" }, 404);
+      if (!raw) return json({ ok: false, error: "این لینک معتبر نیست" }, 404, INFO_CORS_HEADERS);
       const body = await req.json().catch(() => ({}));
       const senderName = String(body.senderName || "").slice(0, 80);
       const message = String(body.message || "").slice(0, 3000);
       const files = Array.isArray(body.files) ? body.files.slice(0, 6) : [];
-      if (!senderName) return json({ ok: false, error: "نام فرستنده الزامی است" }, 400);
-      if (!message && !files.length) return json({ ok: false, error: "پیام یا حداقل یک فایل الزامی است" }, 400);
+      if (!senderName) return json({ ok: false, error: "نام فرستنده الزامی است" }, 400, INFO_CORS_HEADERS);
+      if (!message && !files.length) return json({ ok: false, error: "پیام یا حداقل یک فایل الزامی است" }, 400, INFO_CORS_HEADERS);
       for (const f of files) {
         if (!f || typeof f.data !== "string" || !/^data:(image\/|application\/pdf|application\/vnd\.|application\/msword)/.test(f.data)) {
-          return json({ ok: false, error: "فرمت یکی از فایل‌ها معتبر نیست" }, 400);
+          return json({ ok: false, error: "فرمت یکی از فایل‌ها معتبر نیست" }, 400, INFO_CORS_HEADERS);
         }
-        if (f.data.length > 6_000_000) return json({ ok: false, error: "حجم یکی از فایل‌ها بیش از حد مجاز است (حداکثر ۴ مگابایت)" }, 400);
+        if (f.data.length > 6_000_000) return json({ ok: false, error: "حجم یکی از فایل‌ها بیش از حد مجاز است (حداکثر ۴ مگابایت)" }, 400, INFO_CORS_HEADERS);
       }
       const code = Math.random().toString(36).slice(2, 8).toUpperCase();
       const inboxRaw = await env.EXAM_KV.get("infolink-inbox:" + linkId);
@@ -668,7 +678,7 @@ async function handleApi(req, env, url, path) {
         reply: null, createdAt: Date.now(),
       });
       await env.EXAM_KV.put("infolink-inbox:" + linkId, JSON.stringify(inbox.slice(0, 300)));
-      return json({ ok: true, code });
+      return json({ ok: true, code }, 200, INFO_CORS_HEADERS);
     }
 
     if (parts[1] === "thread" && parts[2] && method === "GET") {
@@ -676,8 +686,8 @@ async function handleApi(req, env, url, path) {
       const inboxRaw = await env.EXAM_KV.get("infolink-inbox:" + linkId);
       const inbox = inboxRaw ? JSON.parse(inboxRaw) : [];
       const thread = inbox.find((t) => t.code === code);
-      if (!thread) return json({ ok: false, error: "کدی با این مشخصات پیدا نشد" }, 404);
-      return json({ ok: true, thread });
+      if (!thread) return json({ ok: false, error: "کدی با این مشخصات پیدا نشد" }, 404, INFO_CORS_HEADERS);
+      return json({ ok: true, thread }, 200, INFO_CORS_HEADERS);
     }
   }
 
@@ -5573,10 +5583,10 @@ function teacherPage() {
         <div id="infoexchange-links-list"></div>
 
         <h4 style="margin-top:20px">✉️ ارسال به یک لینک اختصاصی (بدون نیاز به باز کردن لینک، همین‌جا در پنل)</h4>
-        <p class="muted" style="font-size:12.5px">مثل ارسال پیامک: لینک یا کدی که یک راهبر، مدیر یا معلمِ دیگر برایتان فرستاده را همین‌جا وارد/پیست کنید و پیام بفرستید — او در صندوق دریافتی خودش می‌بیند.</p>
+        <p class="muted" style="font-size:12.5px">مثل ارسال پیامک: لینک یا کدی که یک راهبر، مدیر یا معلمِ دیگر برایتان فرستاده را همین‌جا وارد/پیست کنید و پیام بفرستید — چه آن لینک از همین پنل شما باشد، چه از یک پنل کاملاً جدا که روی کلودفلر جداگانه ساخته شده. او در صندوق دریافتی خودش می‌بیند.</p>
         <label>لینک یا کد گیرنده</label>
         <div class="row" style="gap:8px">
-          <input id="infoexchange-send-target-input" placeholder="مثلاً: https://.../info/xxxx یا فقط کد xxxx" style="flex:1">
+          <input id="infoexchange-send-target-input" placeholder="اگر لینک از پنل دیگری است، آدرس کامل را بچسبانید — مثلاً: https://xxxx.workers.dev/info/xxxx" style="flex:1">
           <select id="infoexchange-send-target-pick" style="flex:0 0 auto;min-width:170px"><option value="">— یا از لیست انتخاب کنید —</option></select>
         </div>
         <div class="lb-meta-form">
@@ -13877,9 +13887,12 @@ function teacherScript() {
   });
   function infoexParseTargetInput(raw){
     raw=(raw||'').trim();
+    var origin='';
+    var m2=raw.match(/^https?:\\/\\/[^\\/]+/);
+    if(m2)origin=m2[0];
     var m=raw.match(/\\/info\\/([^\\/\\?\\#\\s]+)/);
-    if(m)return decodeURIComponent(m[1]);
-    return raw.replace(/^\\/+|\\/+$/g,'');
+    var code=m?decodeURIComponent(m[1]):raw.replace(/^\\/+|\\/+$/g,'');
+    return {origin:origin,code:code};
   }
   async function infoexLoadLinks(){
     var d=await api('/api/teacher/info-links');
@@ -13942,15 +13955,16 @@ function teacherScript() {
   });
   document.getElementById('btn-infoexchange-send').onclick=async function(){
     var targetRaw=document.getElementById('infoexchange-send-target-input').value;
-    var targetUuid=infoexParseTargetInput(targetRaw);
+    var target=infoexParseTargetInput(targetRaw);
     var senderName=document.getElementById('infoexchange-send-sender').value.trim();
     var message=document.getElementById('infoexchange-send-message').value.trim();
-    if(!targetUuid){toast('لینک یا کد گیرنده را وارد کنید');return;}
+    if(!target.code){toast('لینک یا کد گیرنده را وارد کنید');return;}
     if(!senderName){toast('نام خود را وارد کنید');return;}
     if(!message&&!INFOEX_SEND_FILES.length){toast('پیام یا حداقل یک فایل لازم است');return;}
+    var base=target.origin||location.origin;
     this.disabled=true;this.textContent='در حال ارسال...';
     try{
-      var r=await fetch('/api/info/link/'+encodeURIComponent(targetUuid)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({senderName:senderName,message:message,files:INFOEX_SEND_FILES})});
+      var r=await fetch(base+'/api/info/link/'+encodeURIComponent(target.code)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({senderName:senderName,message:message,files:INFOEX_SEND_FILES})});
       var d=await r.json();
       if(d&&d.ok){
         toast('ارسال شد ✅ (کد پیگیری: '+d.code+')');
@@ -13958,9 +13972,9 @@ function teacherScript() {
         document.getElementById('infoexchange-send-target-input').value='';
         document.getElementById('infoexchange-send-target-pick').value='';
         INFOEX_SEND_FILES=[];infoexRenderSendFilesList();
-        if(INFOEX_SELECTED===targetUuid)infoexOpenInbox(targetUuid);
+        if(!target.origin&&INFOEX_SELECTED===target.code)infoexOpenInbox(target.code);
       }else toast((d&&d.error)||'لینک/کد گیرنده معتبر نیست یا ارسال ناموفق بود');
-    }catch(e){toast('خطا در ارتباط با سرور');}
+    }catch(e){toast('خطا در ارتباط با سرور — اگر لینک از یک پنل دیگر است، از صحیح‌بودن آدرس مطمئن شوید');}
     this.disabled=false;this.textContent='📤 ارسال';
   };
   async function infoexOpenInbox(linkUuid){
