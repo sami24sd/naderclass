@@ -743,6 +743,14 @@ async function handleApi(req, env, url, path) {
       const raw = await env.EXAM_KV.get("infolink-inbox:" + linkId);
       return json({ ok: true, inbox: raw ? JSON.parse(raw) : [] });
     }
+    if (path.startsWith("/api/teacher/info-links/") && path.includes("/thread/") && method === "DELETE") {
+      const rest = path.slice("/api/teacher/info-links/".length);
+      const [linkId, , code] = rest.split("/"); // linkId / thread / code
+      const raw = await env.EXAM_KV.get("infolink-inbox:" + linkId);
+      const inbox = raw ? JSON.parse(raw) : [];
+      await env.EXAM_KV.put("infolink-inbox:" + linkId, JSON.stringify(inbox.filter((t) => t.code !== decodeURIComponent(code))));
+      return json({ ok: true });
+    }
     if (path.startsWith("/api/teacher/info-links/") && path.includes("/thread/") && path.endsWith("/reply") && method === "POST") {
       const rest = path.slice("/api/teacher/info-links/".length);
       const [linkId, , code] = rest.split("/"); // linkId / thread / code / reply
@@ -764,20 +772,36 @@ async function handleApi(req, env, url, path) {
       return json({ ok: true });
     }
 
-    /* --- دریافت و ارسال اطلاعات: اعلان سراسری راهبر --- */
-    if (path === "/api/teacher/broadcast" && method === "GET") {
-      const raw = await env.EXAM_KV.get("broadcast-msg");
-      return json({ ok: true, broadcast: raw ? JSON.parse(raw) : null });
+    /* --- دریافت و ارسال اطلاعات: پیام‌های ارسالی معلم (بدون نیاز به کد رهگیری) --- */
+    if (path === "/api/teacher/info-outbox" && method === "GET") {
+      const raw = await env.EXAM_KV.get("infoex-outbox");
+      return json({ ok: true, outbox: raw ? JSON.parse(raw) : [] });
     }
-    if (path === "/api/teacher/broadcast" && method === "POST") {
+    if (path === "/api/teacher/info-outbox" && method === "POST") {
       const body = await req.json().catch(() => ({}));
-      const message = String(body.message || "").slice(0, 1000);
-      const byName = String(body.byName || "").slice(0, 80);
-      const byRole = String(body.byRole || "").slice(0, 40);
-      if (!message) return json({ ok: false, error: "متن پیام الزامی است" }, 400);
-      const rec = { message, byName, byRole, ts: Date.now() };
-      await env.EXAM_KV.put("broadcast-msg", JSON.stringify(rec));
-      return json({ ok: true, broadcast: rec });
+      const rec = {
+        id: uuid(),
+        targetOrigin: String(body.targetOrigin || "").slice(0, 300),
+        targetCode: String(body.targetCode || "").slice(0, 60),
+        targetLabel: String(body.targetLabel || "").slice(0, 120),
+        senderName: String(body.senderName || "").slice(0, 80),
+        message: String(body.message || "").slice(0, 3000),
+        files: Array.isArray(body.files) ? body.files.slice(0, 6).map((f) => ({ name: f && f.name || "فایل" })) : [],
+        trackingCode: String(body.trackingCode || "").slice(0, 20),
+        createdAt: Date.now(),
+      };
+      const raw = await env.EXAM_KV.get("infoex-outbox");
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift(rec);
+      await env.EXAM_KV.put("infoex-outbox", JSON.stringify(list.slice(0, 300)));
+      return json({ ok: true, sent: rec });
+    }
+    if (path.startsWith("/api/teacher/info-outbox/") && method === "DELETE") {
+      const id = decodeURIComponent(path.slice("/api/teacher/info-outbox/".length));
+      const raw = await env.EXAM_KV.get("infoex-outbox");
+      const list = raw ? JSON.parse(raw) : [];
+      await env.EXAM_KV.put("infoex-outbox", JSON.stringify(list.filter((r) => r.id !== id)));
+      return json({ ok: true });
     }
 
     if (path === "/api/teacher/schedule" && method === "POST") {
@@ -3712,7 +3736,7 @@ function teacherPage() {
           </div>
         </div>
 
-        <a class="tab" data-tab="infoexchange" href="/teacher?tab=infoexchange"><span class="tab-ico">📨</span><span class="tab-label">دریافت و ارسال اطلاعات</span><span class="badge-dot hidden" id="infoexchange-badge"></span></a>
+        <a class="tab" data-tab="infoexchange" href="/teacher?tab=infoexchange"><span class="tab-ico">📨</span><span class="tab-label">دریافت و ارسال اطلاعات</span></a>
         <a class="tab" data-tab="settings" href="/teacher?tab=settings"><span class="tab-ico">⚙️</span><span class="tab-label">تنظیمات</span></a>
         <div style="flex:1"></div>
         <div class="tab" id="btn-logout" style="background:#fee2e2;color:#991b1b"><span class="tab-ico">🚪</span><span class="tab-label">خروج</span></div>
@@ -5558,13 +5582,6 @@ function teacherPage() {
         <h3>📨 دریافت و ارسال اطلاعات</h3>
         <p class="muted">برای هر یک از نقش‌های معلم، راهبر آموزشی یا مدیر مدرسه یک لینک اختصاصی بسازید. دیگران با باز کردن آن لینک می‌توانند عکس، PDF، Word یا Excel برایتان بفرستند؛ شما هم می‌توانید از همین‌جا برایشان پاسخ (فایل یا پیام) بفرستید.</p>
 
-        <div id="infoexchange-broadcast-box" style="background:#fefce8;border:2px solid #eab308;border-radius:10px;padding:14px;margin-bottom:16px">
-          <label>📢 ارسال پیام سراسری (برای همه‌ی معلم‌ها/راهبران/مدیرانی که پنل را باز می‌کنند نمایش داده می‌شود)</label>
-          <textarea id="infoexchange-broadcast-text" rows="2" class="lb-textarea" placeholder="متن پیام سراسری..."></textarea>
-          <button class="btn sm sec" id="btn-infoexchange-broadcast-send" style="margin-top:6px">📢 ارسال پیام سراسری</button>
-          <p class="muted" id="infoexchange-broadcast-current" style="margin-top:8px;font-size:12px"></p>
-        </div>
-
         <h4>➕ ساخت لینک اختصاصی جدید</h4>
         <div class="lb-meta-form">
           <div><label>نام شما</label><input id="infoexchange-new-name" placeholder="نام و نام خانوادگی"></div>
@@ -5598,6 +5615,11 @@ function teacherPage() {
         <input type="file" id="infoexchange-send-files-input" accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx" multiple>
         <div id="infoexchange-send-files-list"></div>
         <button class="btn sm primary" id="btn-infoexchange-send" style="margin-top:8px">📤 ارسال</button>
+
+        <div id="infoexchange-sent-wrap" style="margin-top:20px">
+          <h4>📤 پیام‌های ارسالی من</h4>
+          <div id="infoexchange-sent-list"></div>
+        </div>
 
         <div id="infoexchange-inbox-wrap" class="hidden" style="margin-top:20px">
           <h4>📥 صندوق دریافتی <span id="infoexchange-inbox-owner" class="muted"></span></h4>
@@ -5786,7 +5808,6 @@ function teacherScript() {
     document.getElementById('login').classList.add('hidden');
     document.getElementById('dash').classList.remove('hidden');
     loadStudents();loadQuestions();loadSchedule();
-    if(typeof infoexCheckBroadcastNotif==='function')infoexCheckBroadcastNotif();
     try{
       var qs=new URLSearchParams(location.search);
       var wantTab=qs.get('tab');
@@ -13967,7 +13988,10 @@ function teacherScript() {
       var r=await fetch(base+'/api/info/link/'+encodeURIComponent(target.code)+'/send',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({senderName:senderName,message:message,files:INFOEX_SEND_FILES})});
       var d=await r.json();
       if(d&&d.ok){
-        toast('ارسال شد ✅ (کد پیگیری: '+d.code+')');
+        toast('ارسال شد ✅');
+        var known=INFOEX_LINKS.find(function(l){return l.uuid===target.code;});
+        var targetLabel=known?(known.ownerName+' ('+known.ownerRole+')'):(target.origin?(target.origin+'/info/'+target.code):target.code);
+        api('/api/teacher/info-outbox',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({targetOrigin:target.origin||'',targetCode:target.code,targetLabel:targetLabel,senderName:senderName,message:message,files:INFOEX_SEND_FILES,trackingCode:d.code||''})}).then(infoexLoadOutbox);
         document.getElementById('infoexchange-send-message').value='';
         document.getElementById('infoexchange-send-target-input').value='';
         document.getElementById('infoexchange-send-target-pick').value='';
@@ -13988,7 +14012,7 @@ function teacherScript() {
     var inbox=(d&&d.inbox)||[];
     if(!inbox.length){listEl.innerHTML='<p class="muted">پیامی دریافت نشده.</p>';return;}
     listEl.innerHTML=inbox.map(function(t){
-      var h='<div class="lb-preview" style="margin-top:10px"><p class="muted">از طرف <b>'+esc(t.senderName)+'</b> — کد: '+esc(t.code)+' — '+new Date(t.createdAt).toLocaleString('fa-IR')+'</p>';
+      var h='<div class="lb-preview" style="margin-top:10px"><p class="muted">از طرف <b>'+esc(t.senderName)+'</b> — '+new Date(t.createdAt).toLocaleString('fa-IR')+' &nbsp; <button type="button" class="btn sm danger infoex-inbox-del" data-code="'+t.code+'" style="margin-inline-start:6px">🗑️ حذف پیام</button></p>';
       if(t.message)h+='<p>'+esc(t.message)+'</p>';
       (t.files||[]).forEach(function(f){h+=infoexFileRowHtml(f);});
       if(t.reply){
@@ -14006,6 +14030,13 @@ function teacherScript() {
       h+='</div>';
       return h;
     }).join('');
+    listEl.querySelectorAll('.infoex-inbox-del').forEach(function(b){
+      b.onclick=async function(){
+        if(!confirm('آیا از حذف این پیام مطمئن هستید؟'))return;
+        await api('/api/teacher/info-links/'+encodeURIComponent(linkUuid)+'/thread/'+encodeURIComponent(b.dataset.code),{method:'DELETE'});
+        infoexOpenInbox(linkUuid);
+      };
+    });
     var replyFilesMap={};
     listEl.querySelectorAll('.infoex-reply-file').forEach(function(inp){
       replyFilesMap[inp.dataset.code]=replyFilesMap[inp.dataset.code]||[];
@@ -14059,19 +14090,25 @@ function teacherScript() {
     }
     else toast((d&&d.error)||'خطا در ساخت لینک');
   };
-  document.getElementById('btn-infoexchange-broadcast-send').onclick=async function(){
-    var msg=document.getElementById('infoexchange-broadcast-text').value.trim();
-    if(!msg){toast('متن پیام را وارد کنید');return;}
-    var role=localStorage.getItem('panel-role')||'معلم';
-    var d=await api('/api/teacher/broadcast',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:msg,byRole:role})});
-    if(d&&d.ok){toast('پیام سراسری ارسال شد ✅');document.getElementById('infoexchange-broadcast-text').value='';infoexLoadBroadcastCurrent();}
-    else toast((d&&d.error)||'خطا در ارسال');
-  };
-  async function infoexLoadBroadcastCurrent(){
-    var d=await api('/api/teacher/broadcast');
-    var el=document.getElementById('infoexchange-broadcast-current');
-    if(d&&d.broadcast)el.textContent='آخرین پیام سراسری ('+(d.broadcast.byRole||'')+') — '+new Date(d.broadcast.ts).toLocaleString('fa-IR')+': '+d.broadcast.message;
-    else el.textContent='';
+  async function infoexLoadOutbox(){
+    var listEl=document.getElementById('infoexchange-sent-list');
+    var d=await api('/api/teacher/info-outbox');
+    var outbox=(d&&d.outbox)||[];
+    if(!outbox.length){listEl.innerHTML='<p class="muted">پیامی ارسال نشده.</p>';return;}
+    listEl.innerHTML=outbox.map(function(s){
+      var h='<div class="lb-preview" style="margin-top:10px"><p class="muted">به <b>'+esc(s.targetLabel||s.targetCode)+'</b> — '+new Date(s.createdAt).toLocaleString('fa-IR')+' &nbsp; <button type="button" class="btn sm danger infoex-sent-del" data-id="'+s.id+'" style="margin-inline-start:6px">🗑️ حذف پیام</button></p>';
+      if(s.message)h+='<p>'+esc(s.message)+'</p>';
+      (s.files||[]).forEach(function(f){h+='<div class="info-file-row" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;margin-top:6px;font-size:13px">📎 '+esc(f.name)+'</div>';});
+      h+='</div>';
+      return h;
+    }).join('');
+    listEl.querySelectorAll('.infoex-sent-del').forEach(function(b){
+      b.onclick=async function(){
+        if(!confirm('آیا از حذف این پیام از فهرست ارسالی‌های خود مطمئن هستید؟'))return;
+        await api('/api/teacher/info-outbox/'+encodeURIComponent(b.dataset.id),{method:'DELETE'});
+        infoexLoadOutbox();
+      };
+    });
   }
   var INFOEX_LOADED=false;
   async function loadInfoExchangeIfNeeded(){
@@ -14083,24 +14120,8 @@ function teacherScript() {
       document.getElementById('infoexchange-send-sender').value=savedName;
     }
     infoexLoadLinks();
-    infoexLoadBroadcastCurrent();
+    infoexLoadOutbox();
   }
-  async function infoexCheckBroadcastNotif(){
-    try{
-      var d=await api('/api/teacher/broadcast');
-      if(!d||!d.broadcast)return;
-      var lastSeen=parseInt(localStorage.getItem('broadcast-last-seen')||'0',10);
-      if(d.broadcast.ts>lastSeen){
-        document.getElementById('infoexchange-badge').classList.remove('hidden');
-        toast('📢 پیام سراسری از '+(d.broadcast.byRole||'راهبر')+': '+d.broadcast.message);
-      }
-    }catch(e){}
-  }
-  document.querySelector('.tab[data-tab="infoexchange"]').addEventListener('click',function(){
-    document.getElementById('infoexchange-badge').classList.add('hidden');
-    var d2=Date.now();
-    api('/api/teacher/broadcast').then(function(d){if(d&&d.broadcast)localStorage.setItem('broadcast-last-seen',String(d.broadcast.ts));});
-  });
   // ===================== پایان دریافت و ارسال اطلاعات =====================
 
   checkAuth();
