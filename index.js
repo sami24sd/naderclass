@@ -13877,9 +13877,9 @@ function teacherScript() {
   });
   function infoexParseTargetInput(raw){
     raw=(raw||'').trim();
-    var m=raw.match(/\/info\/([^\/\?\#\s]+)/);
+    var m=raw.match(/\\/info\\/([^\\/\\?\\#\\s]+)/);
     if(m)return decodeURIComponent(m[1]);
-    return raw.replace(/^\/+|\/+$/g,'');
+    return raw.replace(/^\\/+|\\/+$/g,'');
   }
   async function infoexLoadLinks(){
     var d=await api('/api/teacher/info-links');
